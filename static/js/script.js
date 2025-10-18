@@ -1,0 +1,1457 @@
+// script.js — modern layered paint engine with object selection and movement
+(function () {
+  const canvasStack = document.getElementById("canvasStack");
+  const statusSpan = document.getElementById("status");
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const saveBtn = document.getElementById("saveBtn");
+  const mouseX = document.getElementById("mouseX");
+  const mouseY = document.getElementById("mouseY");
+  const selectionOverlay = document.getElementById("selectionOverlay");
+
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const TS = window.ToolState;
+
+  let drawing = false;
+  let last = { x: 0, y: 0 };
+  let isDrawingShape = false,
+    shapeStart = null;
+  let isMovingLayer = false,
+    activeMovingLayer = null;
+  let moveStartPos = { x: 0, y: 0 },
+    originalLayerOffset = { x: 0, y: 0 };
+  let isTextModalOpen = false;
+  let isMovingObject = false,
+    activeObject = null,
+    objectStartPos = { x: 0, y: 0 };
+  let isResizingObject = false,
+    resizeHandle = null;
+
+  const maxHistory = 60;
+
+  // Initialize object storage for each layer
+  if (TS.layers) {
+    TS.layers.forEach((layer) => {
+      if (!layer.objects) layer.objects = [];
+    });
+  }
+
+  // ---------- Object System ----------
+  function createTextObject(text, x, y, font, size, color, isBold, isItalic) {
+    return {
+      type: "text",
+      text: text,
+      x: x,
+      y: y,
+      width: 0, // Will be calculated when drawn
+      height: 0,
+      font: font,
+      size: size,
+      color: color,
+      bold: isBold,
+      italic: isItalic,
+      selected: false,
+    };
+  }
+
+  function createShapeObject(
+    shapeType,
+    x1,
+    y1,
+    x2,
+    y2,
+    color,
+    fill,
+    stroke,
+    strokeWidth
+  ) {
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+
+    return {
+      type: "shape",
+      shapeType: shapeType,
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+      color: color,
+      fill: fill,
+      stroke: stroke,
+      strokeWidth: strokeWidth,
+      selected: false,
+    };
+  }
+
+  function drawObject(ctx, obj) {
+    ctx.save();
+    ctx.globalAlpha = TS.opacity;
+
+    if (obj.type === "text") {
+      let fontStyle = "";
+      if (obj.bold) fontStyle += "bold ";
+      if (obj.italic) fontStyle += "italic ";
+
+      ctx.font = `${fontStyle}${obj.size}px ${obj.font}`;
+      ctx.fillStyle = obj.color;
+      ctx.textBaseline = "top";
+
+      // Add text shadow for better visibility
+      ctx.shadowColor = "rgba(0,0,0,0.3)";
+      ctx.shadowBlur = 2;
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 1;
+
+      ctx.fillText(obj.text, obj.x, obj.y);
+
+      // Calculate actual dimensions
+      const metrics = ctx.measureText(obj.text);
+      obj.width = metrics.width;
+      obj.height = obj.size;
+    } else if (obj.type === "shape") {
+      const fill = obj.fill;
+      const stroke = obj.stroke;
+      const strokeWidth = obj.strokeWidth;
+
+      if (fill) {
+        ctx.fillStyle = obj.color;
+      }
+      if (stroke) {
+        ctx.strokeStyle = obj.color;
+        ctx.lineWidth = strokeWidth;
+      }
+
+      ctx.beginPath();
+
+      switch (obj.shapeType) {
+        case "rect":
+          ctx.rect(obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "circle":
+          const radius = Math.min(obj.width, obj.height) / 2;
+          const centerX = obj.x + obj.width / 2;
+          const centerY = obj.y + obj.height / 2;
+          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+          break;
+        case "ellipse":
+          ctx.ellipse(
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            obj.width / 2,
+            obj.height / 2,
+            0,
+            0,
+            Math.PI * 2
+          );
+          break;
+        case "triangle":
+          ctx.moveTo(obj.x + obj.width / 2, obj.y);
+          ctx.lineTo(obj.x, obj.y + obj.height);
+          ctx.lineTo(obj.x + obj.width, obj.y + obj.height);
+          ctx.closePath();
+          break;
+        case "line":
+          ctx.moveTo(obj.x, obj.y);
+          ctx.lineTo(obj.x + obj.width, obj.y + obj.height);
+          break;
+        case "star":
+          drawStar(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            5,
+            Math.min(obj.width, obj.height) / 2,
+            Math.min(obj.width, obj.height) / 4
+          );
+          break;
+        case "heart":
+          drawHeart(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            obj.width,
+            obj.height
+          );
+          break;
+        case "arrow":
+          drawArrow(ctx, obj.x, obj.y, obj.x + obj.width, obj.y + obj.height);
+          break;
+        case "polygon":
+          drawPolygon(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            6,
+            Math.min(obj.width, obj.height) / 2
+          );
+          break;
+      }
+
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+
+    ctx.restore();
+
+    // Draw selection handles if object is selected
+    if (obj.selected) {
+      drawSelectionHandles(ctx, obj);
+    }
+  }
+
+  function drawSelectionHandles(ctx, obj) {
+    ctx.save();
+    ctx.strokeStyle = "#0000ff";
+    ctx.fillStyle = "#ffffff";
+    ctx.lineWidth = 2;
+
+    // Draw bounding box
+    ctx.strokeRect(obj.x - 2, obj.y - 2, obj.width + 4, obj.height + 4);
+
+    // Draw resize handles (only for shapes for now)
+    if (obj.type === "shape") {
+      const handleSize = 6;
+
+      // Top-left
+      ctx.fillRect(
+        obj.x - handleSize / 2,
+        obj.y - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+      ctx.strokeRect(
+        obj.x - handleSize / 2,
+        obj.y - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+
+      // Top-right
+      ctx.fillRect(
+        obj.x + obj.width - handleSize / 2,
+        obj.y - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+      ctx.strokeRect(
+        obj.x + obj.width - handleSize / 2,
+        obj.y - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+
+      // Bottom-left
+      ctx.fillRect(
+        obj.x - handleSize / 2,
+        obj.y + obj.height - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+      ctx.strokeRect(
+        obj.x - handleSize / 2,
+        obj.y + obj.height - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+
+      // Bottom-right
+      ctx.fillRect(
+        obj.x + obj.width - handleSize / 2,
+        obj.y + obj.height - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+      ctx.strokeRect(
+        obj.x + obj.width - handleSize / 2,
+        obj.y + obj.height - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+    }
+
+    ctx.restore();
+  }
+
+  function getObjectAtPoint(x, y) {
+    const layer = currentLayer();
+    if (!layer || !layer.objects) return null;
+
+    // Check objects in reverse order (top-most first)
+    for (let i = layer.objects.length - 1; i >= 0; i--) {
+      const obj = layer.objects[i];
+
+      if (obj.type === "text") {
+        // Simple bounding box check for text
+        if (
+          x >= obj.x &&
+          x <= obj.x + obj.width &&
+          y >= obj.y &&
+          y <= obj.y + obj.height
+        ) {
+          return obj;
+        }
+      } else if (obj.type === "shape") {
+        // Bounding box check for shapes
+        if (
+          x >= obj.x &&
+          x <= obj.x + obj.width &&
+          y >= obj.y &&
+          y <= obj.y + obj.height
+        ) {
+          return obj;
+        }
+      }
+    }
+    return null;
+  }
+
+  function getResizeHandleAtPoint(obj, x, y) {
+    if (!obj || obj.type !== "shape") return null;
+
+    const handleSize = 6;
+    const handles = [
+      {
+        name: "top-left",
+        x: obj.x - handleSize / 2,
+        y: obj.y - handleSize / 2,
+      },
+      {
+        name: "top-right",
+        x: obj.x + obj.width - handleSize / 2,
+        y: obj.y - handleSize / 2,
+      },
+      {
+        name: "bottom-left",
+        x: obj.x - handleSize / 2,
+        y: obj.y + obj.height - handleSize / 2,
+      },
+      {
+        name: "bottom-right",
+        x: obj.x + obj.width - handleSize / 2,
+        y: obj.y + obj.height - handleSize / 2,
+      },
+    ];
+
+    for (const handle of handles) {
+      if (
+        x >= handle.x &&
+        x <= handle.x + handleSize &&
+        y >= handle.y &&
+        y <= handle.y + handleSize
+      ) {
+        return handle.name;
+      }
+    }
+    return null;
+  }
+
+  function resizeObject(obj, handle, newX, newY) {
+    switch (handle) {
+      case "top-left":
+        obj.width += obj.x - newX;
+        obj.height += obj.y - newY;
+        obj.x = newX;
+        obj.y = newY;
+        break;
+      case "top-right":
+        obj.width = newX - obj.x;
+        obj.height += obj.y - newY;
+        obj.y = newY;
+        break;
+      case "bottom-left":
+        obj.width += obj.x - newX;
+        obj.height = newY - obj.y;
+        obj.x = newX;
+        break;
+      case "bottom-right":
+        obj.width = newX - obj.x;
+        obj.height = newY - obj.y;
+        break;
+    }
+
+    // Ensure minimum size
+    obj.width = Math.max(obj.width, 10);
+    obj.height = Math.max(obj.height, 10);
+  }
+
+  function deselectAllObjects() {
+    const layer = currentLayer();
+    if (layer && layer.objects) {
+      layer.objects.forEach((obj) => {
+        obj.selected = false;
+      });
+    }
+    activeObject = null;
+    hideSelectionOverlay();
+  }
+
+  function showSelectionOverlay(obj) {
+    if (selectionOverlay && obj) {
+      selectionOverlay.style.left = obj.x - 2 + "px";
+      selectionOverlay.style.top = obj.y - 2 + "px";
+      selectionOverlay.style.width = obj.width + 4 + "px";
+      selectionOverlay.style.height = obj.height + 4 + "px";
+      selectionOverlay.style.display = "block";
+    }
+  }
+
+  function hideSelectionOverlay() {
+    if (selectionOverlay) {
+      selectionOverlay.style.display = "none";
+    }
+  }
+
+  function renderLayerWithObjects(layer) {
+    const ctx = layer.ctx;
+    const w = layer.canvas.width / DPR;
+    const h = layer.canvas.height / DPR;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, w, h);
+
+    // Redraw all objects
+    if (layer.objects) {
+      layer.objects.forEach((obj) => {
+        drawObject(ctx, obj);
+      });
+    }
+  }
+
+  // ---------- Layers ----------
+  function createLayer(id, width, height) {
+    const c = document.createElement("canvas");
+    c.dataset.layerId = id;
+    c.className = "layer-canvas";
+    c.style.position = "absolute";
+    c.style.inset = "0";
+    c.style.width = "100%";
+    c.style.height = "100%";
+    c.style.zIndex = id;
+    canvasStack.appendChild(c);
+
+    c.width = Math.floor(width * DPR);
+    c.height = Math.floor(height * DPR);
+    const ctx = c.getContext("2d");
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    return {
+      id,
+      canvas: c,
+      ctx,
+      visible: true,
+      history: [],
+      historyIndex: -1,
+      name: `Layer ${id + 1}`,
+      offsetX: 0,
+      offsetY: 0,
+      objects: [], // Array to store objects
+    };
+  }
+
+  function init() {
+    const w = Math.max(400, Math.floor(canvasStack.clientWidth));
+    const h = Math.max(300, Math.floor(canvasStack.clientHeight));
+    canvasStack.querySelectorAll("canvas").forEach((n) => n.remove());
+    TS.layers = [];
+    const base = createLayer(0, w, h);
+    base.ctx.fillStyle = "#ffffff";
+    base.ctx.fillRect(0, 0, w, h);
+    pushHistory(base);
+    TS.layers.push(base);
+    TS.activeLayer = 0;
+    renderUI();
+    updateCanvasSizeDisplay(w, h);
+  }
+
+  function updateCanvasSizeDisplay(w, h) {
+    const canvasSize = document.getElementById("canvasSize");
+    if (canvasSize) {
+      canvasSize.textContent = `${w}×${h}`;
+    }
+  }
+
+  function resizeAll() {
+    const w = Math.max(400, Math.floor(canvasStack.clientWidth));
+    const h = Math.max(300, Math.floor(canvasStack.clientHeight));
+    TS.layers.forEach((layer) => {
+      const old = new Image();
+      old.src = layer.canvas.toDataURL();
+      old.onload = () => {
+        layer.canvas.width = w * DPR;
+        layer.canvas.height = h * DPR;
+        layer.ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        layer.ctx.drawImage(old, 0, 0, w, h);
+        // Redraw objects on top
+        if (layer.objects && layer.objects.length > 0) {
+          layer.objects.forEach((obj) => {
+            drawObject(layer.ctx, obj);
+          });
+        }
+      };
+    });
+    renderUI();
+    updateCanvasSizeDisplay(w, h);
+  }
+  window.addEventListener("resize", resizeAll);
+
+  // ---------- History ----------
+  function pushHistory(layer) {
+    const snap = layer.canvas.toDataURL();
+    if (layer.historyIndex < layer.history.length - 1)
+      layer.history = layer.history.slice(0, layer.historyIndex + 1);
+    layer.history.push(snap);
+    if (layer.history.length > maxHistory) layer.history.shift();
+    layer.historyIndex = layer.history.length - 1;
+  }
+
+  function loadHistoryState(layer, index) {
+    const ctx = layer.ctx;
+    const w = layer.canvas.width / DPR,
+      h = layer.canvas.height / DPR;
+    ctx.clearRect(0, 0, w, h);
+    if (index >= 0 && index < layer.history.length) {
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, w, h);
+        // Redraw objects after loading history
+        if (layer.objects && layer.objects.length > 0) {
+          layer.objects.forEach((obj) => {
+            drawObject(ctx, obj);
+          });
+        }
+      };
+      img.src = layer.history[index];
+      layer.historyIndex = index;
+    } else {
+      if (layer.id === 0) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+      }
+      layer.history = [];
+      layer.historyIndex = -1;
+      layer.objects = []; // Clear objects too
+      pushHistory(layer);
+    }
+  }
+
+  function undoLayer(layer) {
+    if (!layer) return;
+    if (layer.historyIndex <= 0) loadHistoryState(layer, -1);
+    else loadHistoryState(layer, layer.historyIndex - 1);
+  }
+  function redoLayer(layer) {
+    if (!layer) return;
+    if (layer.historyIndex < layer.history.length - 1)
+      loadHistoryState(layer, layer.historyIndex + 1);
+  }
+
+  // ---------- Helpers ----------
+  function getPos(e) {
+    const rect = canvasStack.getBoundingClientRect();
+    let x = e.clientX,
+      y = e.clientY;
+    if (e.touches?.[0]) {
+      x = e.touches[0].clientX;
+      y = e.touches[0].clientY;
+    }
+
+    // Update coordinates display
+    if (mouseX && mouseY) {
+      mouseX.textContent = Math.floor(x - rect.left);
+      mouseY.textContent = Math.floor(y - rect.top);
+    }
+
+    return { x: x - rect.left, y: y - rect.top };
+  }
+
+  function currentLayer() {
+    return TS.layers[TS.activeLayer];
+  }
+
+  function strokeLine(ctx, x1, y1, x2, y2, size, color, type) {
+    ctx.save();
+    ctx.globalAlpha = TS.opacity;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineCap = type === "square" ? "butt" : "round";
+    ctx.lineJoin = ctx.lineCap;
+
+    if (type === "textured") {
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.lineWidth = size * (0.6 + Math.random() * 0.8);
+        const off = (Math.random() - 0.5) * 2;
+        ctx.moveTo(x1 + off, y1 + off);
+        ctx.lineTo(x2 + off, y2 + off);
+        ctx.stroke();
+      }
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function sprayAt(ctx, x, y, radius, density, color) {
+    ctx.save();
+    ctx.globalAlpha = TS.opacity;
+    ctx.fillStyle = color;
+    for (let i = 0; i < density; i++) {
+      const r = Math.random() * radius,
+        a = Math.random() * Math.PI * 2;
+      ctx.fillRect(x + Math.cos(a) * r, y + Math.sin(a) * r, 1, 1);
+    }
+    ctx.restore();
+  }
+
+  // ---- Flood Fill (DPR-correct) ----
+  function hexToRGBA(hex) {
+    let h = hex.replace("#", "");
+    if (h.length === 3)
+      h = h
+        .split("")
+        .map((ch) => ch + ch)
+        .join("");
+    return [
+      parseInt(h.slice(0, 2), 16),
+      parseInt(h.slice(2, 4), 16),
+      parseInt(h.slice(4, 6), 16),
+      255,
+    ];
+  }
+  function colorsMatch(a, b) {
+    return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+  }
+  function floodFillLayer(layer, x, y, fillHex) {
+    const c = layer.canvas,
+      ctx = layer.ctx;
+    const w = c.width,
+      h = c.height;
+    const sx = Math.floor(x * DPR),
+      sy = Math.floor(y * DPR);
+    if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
+
+    const img = ctx.getImageData(0, 0, w, h),
+      data = img.data;
+    const idx0 = (sy * w + sx) * 4;
+    const target = [data[idx0], data[idx0 + 1], data[idx0 + 2], data[idx0 + 3]];
+    const fill = hexToRGBA(fillHex);
+    if (colorsMatch(target, fill)) return;
+
+    const stack = [[sx, sy]];
+    while (stack.length) {
+      const [cx, cy] = stack.pop();
+      if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue;
+      const i = (cy * w + cx) * 4;
+      const cur = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+      if (colorsMatch(cur, target)) {
+        data[i] = fill[0];
+        data[i + 1] = fill[1];
+        data[i + 2] = fill[2];
+        data[i + 3] = fill[3];
+        stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ---------- Shape Drawing Functions ----------
+  function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
+    let rot = (Math.PI / 2) * 3;
+    let x = cx;
+    let y = cy;
+    let step = Math.PI / spikes;
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - outerRadius);
+
+    for (let i = 0; i < spikes; i++) {
+      x = cx + Math.cos(rot) * outerRadius;
+      y = cy + Math.sin(rot) * outerRadius;
+      ctx.lineTo(x, y);
+      rot += step;
+
+      x = cx + Math.cos(rot) * innerRadius;
+      y = cy + Math.sin(rot) * innerRadius;
+      ctx.lineTo(x, y);
+      rot += step;
+    }
+
+    ctx.lineTo(cx, cy - outerRadius);
+    ctx.closePath();
+  }
+
+  function drawHeart(ctx, x, y, width, height) {
+    const topCurveHeight = height * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(x, y + height / 4);
+    // Left top curve
+    ctx.bezierCurveTo(x, y, x - width / 2, y, x - width / 2, y + height / 4);
+    // Left bottom curve
+    ctx.bezierCurveTo(
+      x - width / 2,
+      y + height / 2,
+      x,
+      y + height * 0.75,
+      x,
+      y + height
+    );
+    // Right bottom curve
+    ctx.bezierCurveTo(
+      x,
+      y + height * 0.75,
+      x + width / 2,
+      y + height / 2,
+      x + width / 2,
+      y + height / 4
+    );
+    // Right top curve
+    ctx.bezierCurveTo(x + width / 2, y, x, y, x, y + height / 4);
+    ctx.closePath();
+  }
+
+  function drawArrow(ctx, fromX, fromY, toX, toY) {
+    const headlen = 15;
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.moveTo(
+      toX - headlen * Math.cos(angle - Math.PI / 6),
+      toY - headlen * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.lineTo(toX, toY);
+    ctx.lineTo(
+      toX - headlen * Math.cos(angle + Math.PI / 6),
+      toY - headlen * Math.sin(angle + Math.PI / 6)
+    );
+  }
+
+  function drawPolygon(ctx, x, y, sides, radius) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius * Math.cos(0), y + radius * Math.sin(0));
+
+    for (let i = 1; i <= sides; i++) {
+      ctx.lineTo(
+        x + radius * Math.cos((i * 2 * Math.PI) / sides),
+        y + radius * Math.sin((i * 2 * Math.PI) / sides)
+      );
+    }
+
+    ctx.closePath();
+  }
+
+  function drawShape(ctx, shapeType, x1, y1, x2, y2) {
+    ctx.save();
+    ctx.globalAlpha = TS.opacity;
+
+    const fill = TS.shapeFill;
+    const stroke = TS.shapeStroke;
+    const strokeWidth = TS.strokeWidth;
+
+    if (fill) {
+      ctx.fillStyle = TS.color;
+    }
+    if (stroke) {
+      ctx.strokeStyle = TS.color;
+      ctx.lineWidth = strokeWidth;
+    }
+
+    ctx.beginPath();
+
+    const width = x2 - x1;
+    const height = y2 - y1;
+
+    switch (shapeType) {
+      case "rect":
+        ctx.rect(x1, y1, width, height);
+        break;
+      case "circle":
+        const radius = Math.min(Math.abs(width), Math.abs(height)) / 2;
+        const centerX = x1 + width / 2;
+        const centerY = y1 + height / 2;
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        break;
+      case "ellipse":
+        ctx.ellipse(
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.abs(width) / 2,
+          Math.abs(height) / 2,
+          0,
+          0,
+          Math.PI * 2
+        );
+        break;
+      case "triangle":
+        ctx.moveTo(x1 + width / 2, y1);
+        ctx.lineTo(x1, y2);
+        ctx.lineTo(x2, y2);
+        ctx.closePath();
+        break;
+      case "line":
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        break;
+      case "star":
+        drawStar(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          5,
+          Math.min(Math.abs(width), Math.abs(height)) / 2,
+          Math.min(Math.abs(width), Math.abs(height)) / 4
+        );
+        break;
+      case "heart":
+        drawHeart(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.abs(width),
+          Math.abs(height)
+        );
+        break;
+      case "arrow":
+        drawArrow(ctx, x1, y1, x2, y2);
+        break;
+      case "polygon":
+        drawPolygon(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          6,
+          Math.min(Math.abs(width), Math.abs(height)) / 2
+        );
+        break;
+    }
+
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // ---------- Text Modal Management ----------
+  function openTextModal() {
+    isTextModalOpen = true;
+    document.getElementById("textModal")?.classList.remove("hidden");
+    document.getElementById("textInput")?.focus();
+  }
+
+  function closeTextModal() {
+    isTextModalOpen = false;
+    document.getElementById("textModal")?.classList.add("hidden");
+    document.getElementById("textInput").value = "";
+  }
+
+  // ---------- Input ----------
+  function start(e) {
+    if (isTextModalOpen) return;
+
+    e.preventDefault();
+    const pos = getPos(e);
+    const layer = currentLayer();
+    if (!layer) return;
+
+    // Handle object selection/movement only when select tool is active
+    if (TS.tool === "select") {
+      const clickedObject = getObjectAtPoint(pos.x, pos.y);
+
+      if (clickedObject) {
+        // Select and potentially move/resize object
+        deselectAllObjects();
+        clickedObject.selected = true;
+        activeObject = clickedObject;
+        showSelectionOverlay(clickedObject);
+
+        // Check if clicking on resize handle
+        resizeHandle = getResizeHandleAtPoint(clickedObject, pos.x, pos.y);
+        if (resizeHandle) {
+          isResizingObject = true;
+          objectStartPos = { x: pos.x, y: pos.y };
+        } else {
+          isMovingObject = true;
+          objectStartPos = {
+            x: pos.x - clickedObject.x,
+            y: pos.y - clickedObject.y,
+          };
+        }
+        return;
+      } else {
+        // Deselect all objects if clicking elsewhere
+        deselectAllObjects();
+
+        // Start layer movement
+        isMovingLayer = true;
+        activeMovingLayer = layer;
+        moveStartPos = pos;
+        originalLayerOffset = { x: layer.offsetX, y: layer.offsetY };
+        canvasStack.style.cursor = "move";
+        return;
+      }
+    }
+
+    // For other tools, handle normal drawing
+    if (TS.tool === "fill") {
+      pushHistory(layer);
+      floodFillLayer(layer, pos.x, pos.y, TS.color);
+      return;
+    }
+    if (TS.tool === "shape") {
+      isDrawingShape = true;
+      shapeStart = pos;
+      // Don't push history here - wait until shape is complete
+      return;
+    }
+    if (TS.tool === "text") {
+      openTextModal();
+      return;
+    }
+
+    // Brush and eraser tools
+    drawing = true;
+    last = pos;
+
+    // Draw initial point for brush/eraser
+    if (TS.tool === "brush" || TS.tool === "eraser") {
+      const ctx = layer.ctx;
+      if (TS.tool === "eraser") {
+        // FIXED: Proper eraser implementation
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, TS.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else if (TS.tool === "brush") {
+        if (TS.brushType === "spray") {
+          sprayAt(
+            ctx,
+            pos.x,
+            pos.y,
+            TS.size * 1.5,
+            Math.max(10, TS.size * 2),
+            TS.color
+          );
+        } else {
+          strokeLine(
+            ctx,
+            pos.x,
+            pos.y,
+            pos.x,
+            pos.y,
+            TS.size,
+            TS.color,
+            TS.brushType
+          );
+        }
+      }
+    }
+  }
+
+  function move(e) {
+    if (isTextModalOpen) return;
+
+    const pos = getPos(e);
+    const layer = currentLayer();
+    if (!layer) return;
+    const ctx = layer.ctx;
+
+    // Handle object movement
+    if (isMovingObject && activeObject) {
+      activeObject.x = pos.x - objectStartPos.x;
+      activeObject.y = pos.y - objectStartPos.y;
+      renderLayerWithObjects(layer);
+      showSelectionOverlay(activeObject);
+      return;
+    }
+
+    // Handle object resizing
+    if (isResizingObject && activeObject && resizeHandle) {
+      resizeObject(activeObject, resizeHandle, pos.x, pos.y);
+      renderLayerWithObjects(layer);
+      showSelectionOverlay(activeObject);
+      return;
+    }
+
+    if (isMovingLayer && activeMovingLayer) {
+      const dx = pos.x - moveStartPos.x,
+        dy = pos.y - moveStartPos.y;
+      activeMovingLayer.offsetX = originalLayerOffset.x + dx;
+      activeMovingLayer.offsetY = originalLayerOffset.y + dy;
+      activeMovingLayer.canvas.style.transform = `translate(${activeMovingLayer.offsetX}px, ${activeMovingLayer.offsetY}px)`;
+      return;
+    }
+
+    if (isDrawingShape && shapeStart) {
+      // Temporary shape preview
+      const snapSrc = layer.history[layer.historyIndex];
+      if (!snapSrc) return;
+      const snap = new Image();
+      snap.onload = function () {
+        const w = layer.canvas.width / DPR,
+          h = layer.canvas.height / DPR;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(snap, 0, 0, w, h);
+        drawShape(ctx, TS.shapeType, shapeStart.x, shapeStart.y, pos.x, pos.y);
+      };
+      snap.src = snapSrc;
+      return;
+    }
+
+    if (!drawing) return;
+
+    if (TS.tool === "eraser") {
+      // FIXED: Proper eraser implementation for continuous erasing
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = TS.size;
+      ctx.strokeStyle = "rgba(0,0,0,1)";
+
+      ctx.beginPath();
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+
+      ctx.restore();
+    } else if (TS.tool === "brush") {
+      if (TS.brushType === "spray")
+        sprayAt(
+          ctx,
+          pos.x,
+          pos.y,
+          TS.size * 1.5,
+          Math.max(10, TS.size * 2),
+          TS.color
+        );
+      else
+        strokeLine(
+          ctx,
+          last.x,
+          last.y,
+          pos.x,
+          pos.y,
+          TS.size,
+          TS.color,
+          TS.brushType
+        );
+    }
+    last = pos;
+  }
+
+  function end(e) {
+    if (isTextModalOpen) return;
+
+    const pos = getPos(e);
+    const layer = currentLayer();
+    if (!layer) return;
+
+    if (isMovingObject || isResizingObject) {
+      isMovingObject = false;
+      isResizingObject = false;
+      resizeHandle = null;
+      pushHistory(layer);
+      return;
+    }
+
+    if (isMovingLayer) {
+      isMovingLayer = false;
+      activeMovingLayer = null;
+      canvasStack.style.cursor = "default";
+      return;
+    }
+
+    if (isDrawingShape && shapeStart) {
+      // Create a shape object instead of drawing directly
+      const shapeObj = createShapeObject(
+        TS.shapeType,
+        shapeStart.x,
+        shapeStart.y,
+        pos.x,
+        pos.y,
+        TS.color,
+        TS.shapeFill,
+        TS.shapeStroke,
+        TS.strokeWidth
+      );
+
+      layer.objects.push(shapeObj);
+      renderLayerWithObjects(layer);
+      pushHistory(layer);
+
+      isDrawingShape = false;
+      shapeStart = null;
+      return;
+    }
+
+    if (drawing) {
+      drawing = false;
+      pushHistory(layer);
+    }
+  }
+
+  // ---------- Events ----------
+  canvasStack.addEventListener("mousedown", start);
+  canvasStack.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", end);
+  canvasStack.addEventListener("mouseleave", end);
+  canvasStack.addEventListener("touchstart", start, { passive: false });
+  canvasStack.addEventListener("touchmove", move, { passive: false });
+  document.addEventListener("touchend", end, { passive: false });
+
+  // Mouse coordinates tracking
+  canvasStack.addEventListener("mousemove", (e) => {
+    getPos(e); // This updates the coordinates display
+  });
+
+  // UI Buttons
+  undoBtn?.addEventListener("click", () => undoLayer(currentLayer()));
+  redoBtn?.addEventListener("click", () => redoLayer(currentLayer()));
+  clearBtn?.addEventListener("click", () => {
+    const layer = currentLayer();
+    if (layer) {
+      layer.objects = [];
+      loadHistoryState(layer, -1);
+    }
+  });
+
+  saveBtn?.addEventListener("click", () => {
+    const w = TS.layers[0].canvas.width / DPR;
+    const h = TS.layers[0].canvas.height / DPR;
+    const composite = document.createElement("canvas");
+    composite.width = w * DPR;
+    composite.height = h * DPR;
+    const cctx = composite.getContext("2d");
+    cctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    cctx.fillStyle = "#fff";
+    cctx.fillRect(0, 0, w, h);
+    TS.layers.forEach(
+      (l) => l.visible && cctx.drawImage(l.canvas, l.offsetX, l.offsetY, w, h)
+    );
+    fetch("/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: composite.toDataURL("image/png") }),
+    })
+      .then((r) => r.json())
+      .then((res) =>
+        alert(res.status === "ok" ? "✅ Drawing Saved!" : "❌ Save failed")
+      );
+  });
+
+  // Text modal handlers
+  document.getElementById("confirmText")?.addEventListener("click", () => {
+    const text = document.getElementById("textInput").value;
+    if (!text.trim()) return;
+
+    const layer = currentLayer();
+    if (layer) {
+      const fontSize =
+        parseInt(document.getElementById("fontSize").value) || 24;
+      const fontFamily = document.getElementById("fontSelect").value || "Arial";
+      const isBold = document
+        .getElementById("boldBtn")
+        ?.classList.contains("active");
+      const isItalic = document
+        .getElementById("italicBtn")
+        ?.classList.contains("active");
+
+      // Create text object instead of drawing directly
+      const textObj = createTextObject(
+        text,
+        50,
+        50, // Default position
+        fontFamily,
+        fontSize,
+        TS.color,
+        isBold,
+        isItalic
+      );
+
+      layer.objects.push(textObj);
+      renderLayerWithObjects(layer);
+      pushHistory(layer);
+    }
+
+    closeTextModal();
+  });
+
+  document.getElementById("cancelText")?.addEventListener("click", () => {
+    closeTextModal();
+  });
+
+  // Text style buttons
+  document.querySelectorAll("#textModal .tool-btn").forEach((btn) => {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      this.classList.toggle("active");
+    });
+  });
+
+  // Font size display
+  document.getElementById("fontSize")?.addEventListener("input", function () {
+    const fontSizeValue = document.getElementById("fontSizeValue");
+    if (fontSizeValue) {
+      fontSizeValue.textContent = this.value + "px";
+    }
+  });
+
+  // Update text tool click handler
+  document.getElementById("textTool")?.addEventListener("click", () => {
+    setTool("text");
+    deselectAllObjects();
+    openTextModal();
+  });
+
+  // Update select tool click handler
+  document.getElementById("selectTool")?.addEventListener("click", () => {
+    setTool("select");
+  });
+
+  // Update other tools to deselect objects
+  document.getElementById("brushTool")?.addEventListener("click", () => {
+    setTool("brush");
+    deselectAllObjects();
+  });
+
+  document.getElementById("eraserTool")?.addEventListener("click", () => {
+    setTool("eraser");
+    deselectAllObjects();
+  });
+
+  document.getElementById("fillTool")?.addEventListener("click", () => {
+    setTool("fill");
+    deselectAllObjects();
+  });
+
+  document.getElementById("sprayTool")?.addEventListener("click", () => {
+    setTool("brush");
+    TS.brushType = "spray";
+    deselectAllObjects();
+  });
+
+  document.getElementById("shapeTool")?.addEventListener("click", () => {
+    setTool("shape");
+    deselectAllObjects();
+  });
+
+  // Keyboard shortcuts
+  window.addEventListener("keydown", (e) => {
+    // Don't process shortcuts if text modal is open
+    if (isTextModalOpen) {
+      if (e.key === "Escape") {
+        closeTextModal();
+      }
+      return;
+    }
+
+    // Delete selected object
+    if ((e.key === "Delete" || e.key === "Backspace") && TS.tool === "select") {
+      const layer = currentLayer();
+      if (layer && layer.objects && activeObject) {
+        layer.objects = layer.objects.filter((obj) => obj !== activeObject);
+        renderLayerWithObjects(layer);
+        pushHistory(layer);
+        deselectAllObjects();
+      }
+    }
+
+    if (e.ctrlKey) {
+      switch (e.key.toLowerCase()) {
+        case "z":
+          e.preventDefault();
+          undoLayer(currentLayer());
+          break;
+        case "y":
+          e.preventDefault();
+          redoLayer(currentLayer());
+          break;
+        case "s":
+          e.preventDefault();
+          saveBtn?.click();
+          break;
+      }
+    }
+
+    // Tool shortcuts - only when modal is not open
+    if (!e.ctrlKey && !e.altKey && !isTextModalOpen) {
+      switch (e.key.toLowerCase()) {
+        case "b":
+          e.preventDefault();
+          setTool("brush");
+          deselectAllObjects();
+          break;
+        case "e":
+          e.preventDefault();
+          setTool("eraser");
+          deselectAllObjects();
+          break;
+        case "f":
+          e.preventDefault();
+          setTool("fill");
+          deselectAllObjects();
+          break;
+        case "t":
+          e.preventDefault();
+          setTool("text");
+          deselectAllObjects();
+          openTextModal();
+          break;
+        case "s":
+          e.preventDefault();
+          setTool("select");
+          break;
+        case "r":
+          e.preventDefault();
+          setTool("shape");
+          deselectAllObjects();
+          break;
+        case "p":
+          e.preventDefault();
+          document.getElementById("sprayTool")?.click();
+          deselectAllObjects();
+          break;
+      }
+    }
+  });
+
+  // Layer management events
+  window.addEventListener("addLayer", () => {
+    const w = Math.max(400, Math.floor(canvasStack.clientWidth));
+    const h = Math.max(300, Math.floor(canvasStack.clientHeight));
+    const id = TS.layers.length;
+    const newLayer = createLayer(id, w, h);
+    pushHistory(newLayer);
+    TS.layers.push(newLayer);
+    TS.activeLayer = id;
+    renderUI();
+    if (statusSpan) {
+      statusSpan.textContent = `New Layer ${id + 1} added`;
+      setTimeout(() => (statusSpan.textContent = "Ready to draw"), 1200);
+    }
+  });
+
+  window.addEventListener("deleteLayer", () => {
+    if (TS.layers.length <= 1) return;
+
+    const activeLayer = TS.activeLayer;
+    const layerToRemove = TS.layers[activeLayer];
+
+    // Remove from DOM
+    layerToRemove.canvas.remove();
+
+    // Remove from array
+    TS.layers.splice(activeLayer, 1);
+
+    // Update active layer
+    TS.activeLayer = Math.max(0, activeLayer - 1);
+
+    renderUI();
+
+    if (statusSpan) {
+      statusSpan.textContent = `Layer deleted`;
+      setTimeout(() => (statusSpan.textContent = "Ready to draw"), 1200);
+    }
+  });
+
+  window.addEventListener("duplicateLayer", () => {
+    const currentLayer = TS.layers[TS.activeLayer];
+    const w = currentLayer.canvas.width / DPR;
+    const h = currentLayer.canvas.height / DPR;
+
+    const newLayer = createLayer(TS.layers.length, w, h);
+
+    // Copy the content including objects
+    newLayer.ctx.drawImage(currentLayer.canvas, 0, 0);
+    newLayer.objects = JSON.parse(JSON.stringify(currentLayer.objects)); // Deep copy objects
+
+    pushHistory(newLayer);
+
+    TS.layers.push(newLayer);
+    TS.activeLayer = TS.layers.length - 1;
+
+    renderUI();
+
+    if (statusSpan) {
+      statusSpan.textContent = `Layer duplicated`;
+      setTimeout(() => (statusSpan.textContent = "Ready to draw"), 1200);
+    }
+  });
+
+  function renderUI() {
+    // 1. Canvas management
+    TS.layers.forEach((l, i) => {
+      l.canvas.style.zIndex = i;
+      l.canvas.style.display = l.visible ? "block" : "none";
+      l.canvas.style.transform = `translate(${l.offsetX}px, ${l.offsetY}px)`;
+    });
+
+    // 2. Update Layer List UI
+    const list = document.getElementById("layerList");
+    if (!list) return;
+
+    list.innerHTML = "";
+    [...TS.layers]
+      .slice()
+      .reverse()
+      .forEach((layer, idx) => {
+        const realIndex = TS.layers.length - 1 - idx;
+        const item = document.createElement("div");
+        item.className =
+          "layer-item" + (realIndex === TS.activeLayer ? " active" : "");
+
+        // Create thumbnail
+        const thumbCanvas = document.createElement("canvas");
+        thumbCanvas.width = 60;
+        thumbCanvas.height = 40;
+        const thumbCtx = thumbCanvas.getContext("2d");
+        thumbCtx.fillStyle = "#ffffff";
+        thumbCtx.fillRect(0, 0, 60, 40);
+        thumbCtx.drawImage(layer.canvas, 0, 0, 60, 40);
+
+        item.innerHTML = `
+          <div class="layer-thumbnail"></div>
+          <div class="layer-name">${layer.name}</div>
+          <button class="layer-visibility" title="Toggle visibility">${
+            layer.visible ? "👁️" : "🚫"
+          }</button>
+        `;
+
+        // Replace the thumbnail placeholder with actual canvas
+        const thumbContainer = item.querySelector(".layer-thumbnail");
+        thumbContainer.appendChild(thumbCanvas);
+
+        // Make layer active when clicked
+        item.addEventListener("click", (e) => {
+          if (e.target.tagName === "BUTTON") return; // ignore toggle button
+          TS.activeLayer = realIndex;
+          renderUI();
+        });
+
+        // Toggle visibility
+        item.querySelector("button").addEventListener("click", (e) => {
+          e.stopPropagation();
+          layer.visible = !layer.visible;
+          renderUI();
+        });
+
+        list.appendChild(item);
+      });
+  }
+
+  // boot
+  init();
+  renderUI();
+})();
