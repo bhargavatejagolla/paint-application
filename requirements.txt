@@ -3,5 +3,3 @@ gunicorn
 Pillow
 opencv-python
 numpy
-torch
-
