@@ -1127,7 +1127,8 @@
     }
   });
 
-  saveBtn?.addEventListener("click", () => {
+  // ✅ Modified Save Button Handler
+  saveBtn?.addEventListener("click", async () => {
     const w = TS.layers[0].canvas.width / DPR;
     const h = TS.layers[0].canvas.height / DPR;
     const composite = document.createElement("canvas");
@@ -1140,16 +1141,45 @@
     TS.layers.forEach(
       (l) => l.visible && cctx.drawImage(l.canvas, l.offsetX, l.offsetY, w, h)
     );
-    fetch("/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: composite.toDataURL("image/png") }),
-    })
-      .then((r) => r.json())
-      .then((res) =>
-        alert(res.status === "ok" ? "✅ Drawing Saved!" : "❌ Save failed")
+
+    const imageData = composite.toDataURL("image/png");
+
+    try {
+      // Try server save first
+      const response = await fetch("/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: imageData }),
+      });
+
+      const result = await response.json();
+
+      if (result.status === "ok") {
+        alert("✅ Drawing Saved on Server!");
+      } else {
+        // Fallback to client-side download
+        downloadImage(imageData);
+      }
+    } catch (error) {
+      // Fallback to client-side download if server is unavailable
+      console.log(
+        "Server save failed, falling back to client download:",
+        error
       );
+      downloadImage(imageData);
+    }
   });
+
+  // Client-side download function
+  function downloadImage(dataUrl) {
+    const link = document.createElement("a");
+    link.download = `drawing-${new Date().getTime()}.png`;
+    link.href = dataUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    alert("🎨 Your drawing has been downloaded successfully!");
+  }
 
   // Text modal handlers
   document.getElementById("confirmText")?.addEventListener("click", () => {
