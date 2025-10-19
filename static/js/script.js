@@ -37,6 +37,54 @@
     });
   }
 
+  // ---------- Dark Mode Detection ----------
+  function isDarkMode() {
+    return (
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+    );
+  }
+
+  function getTextColorForBackground() {
+    return isDarkMode() ? "#000000" : "#ffffff";
+  }
+
+  // ---------- Responsive UI Fixes ----------
+  function initResponsiveUI() {
+    // Make sure UI elements are properly visible on mobile
+    const toolbar = document.querySelector(".toolbar");
+    const controls = document.querySelector(".controls");
+
+    if (toolbar) {
+      toolbar.style.zIndex = "1000";
+      toolbar.style.position = "relative";
+    }
+
+    if (controls) {
+      controls.style.zIndex = "1000";
+      controls.style.position = "relative";
+    }
+
+    // Fix text modal for mobile
+    const textModal = document.getElementById("textModal");
+    if (textModal) {
+      textModal.style.zIndex = "2000";
+      textModal.style.position = "fixed";
+      textModal.style.top = "50%";
+      textModal.style.left = "50%";
+      textModal.style.transform = "translate(-50%, -50%)";
+      textModal.style.maxWidth = "90vw";
+      textModal.style.maxHeight = "90vh";
+      textModal.style.overflow = "auto";
+    }
+
+    // Fix selection overlay
+    if (selectionOverlay) {
+      selectionOverlay.style.zIndex = "100";
+      selectionOverlay.style.pointerEvents = "none";
+    }
+  }
+
   // ---------- Object System ----------
   function createTextObject(text, x, y, font, size, color, isBold, isItalic) {
     return {
@@ -52,6 +100,7 @@
       bold: isBold,
       italic: isItalic,
       selected: false,
+      resizable: true, // Text objects CAN be resized
     };
   }
 
@@ -83,6 +132,7 @@
       stroke: stroke,
       strokeWidth: strokeWidth,
       selected: false,
+      resizable: true, // Shape objects CAN be resized
     };
   }
 
@@ -99,11 +149,21 @@
       ctx.fillStyle = obj.color;
       ctx.textBaseline = "top";
 
-      // Add text shadow for better visibility
-      ctx.shadowColor = "rgba(0,0,0,0.3)";
-      ctx.shadowBlur = 2;
-      ctx.shadowOffsetX = 1;
-      ctx.shadowOffsetY = 1;
+      // Add text background for better visibility - adapts to dark mode
+      if (TS.showTextBackground) {
+        const metrics = ctx.measureText(obj.text);
+        const textWidth = metrics.width;
+        const textHeight = obj.size;
+
+        // Use appropriate background color based on dark mode
+        const bgColor = isDarkMode()
+          ? "rgba(255, 255, 255, 0.9)"
+          : "rgba(0, 0, 0, 0.7)";
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(obj.x - 2, obj.y - 2, textWidth + 4, textHeight + 4);
+
+        ctx.fillStyle = obj.color;
+      }
 
       ctx.fillText(obj.text, obj.x, obj.y);
 
@@ -196,81 +256,100 @@
 
     ctx.restore();
 
-    // Draw selection handles if object is selected
-    if (obj.selected) {
+    // Draw selection handles if object is selected and resizable
+    if (obj.selected && obj.resizable) {
       drawSelectionHandles(ctx, obj);
+    } else if (obj.selected) {
+      // Just draw bounding box for non-resizable objects
+      drawBoundingBox(ctx, obj);
     }
   }
 
-  function drawSelectionHandles(ctx, obj) {
+  function drawBoundingBox(ctx, obj) {
     ctx.save();
-    ctx.strokeStyle = "#0000ff";
-    ctx.fillStyle = "#ffffff";
+    // Use contrasting color based on dark mode
+    const strokeColor = isDarkMode() ? "#00ff00" : "#0000ff";
+    ctx.strokeStyle = strokeColor;
     ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(obj.x - 2, obj.y - 2, obj.width + 4, obj.height + 4);
+    ctx.restore();
+  }
+
+  function drawSelectionHandles(ctx, obj) {
+    if (!obj.resizable) return;
+
+    ctx.save();
+    // Use contrasting colors based on dark mode
+    const strokeColor = isDarkMode() ? "#00ff00" : "#0000ff";
+    const fillColor = isDarkMode() ? "#000000" : "#ffffff";
+
+    ctx.strokeStyle = strokeColor;
+    ctx.fillStyle = fillColor;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
 
     // Draw bounding box
     ctx.strokeRect(obj.x - 2, obj.y - 2, obj.width + 4, obj.height + 4);
 
-    // Draw resize handles (only for shapes for now)
-    if (obj.type === "shape") {
-      const handleSize = 6;
+    // Draw resize handles
+    const handleSize = 6;
 
-      // Top-left
-      ctx.fillRect(
-        obj.x - handleSize / 2,
-        obj.y - handleSize / 2,
-        handleSize,
-        handleSize
-      );
-      ctx.strokeRect(
-        obj.x - handleSize / 2,
-        obj.y - handleSize / 2,
-        handleSize,
-        handleSize
-      );
+    // Top-left
+    ctx.fillRect(
+      obj.x - handleSize / 2,
+      obj.y - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+    ctx.strokeRect(
+      obj.x - handleSize / 2,
+      obj.y - handleSize / 2,
+      handleSize,
+      handleSize
+    );
 
-      // Top-right
-      ctx.fillRect(
-        obj.x + obj.width - handleSize / 2,
-        obj.y - handleSize / 2,
-        handleSize,
-        handleSize
-      );
-      ctx.strokeRect(
-        obj.x + obj.width - handleSize / 2,
-        obj.y - handleSize / 2,
-        handleSize,
-        handleSize
-      );
+    // Top-right
+    ctx.fillRect(
+      obj.x + obj.width - handleSize / 2,
+      obj.y - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+    ctx.strokeRect(
+      obj.x + obj.width - handleSize / 2,
+      obj.y - handleSize / 2,
+      handleSize,
+      handleSize
+    );
 
-      // Bottom-left
-      ctx.fillRect(
-        obj.x - handleSize / 2,
-        obj.y + obj.height - handleSize / 2,
-        handleSize,
-        handleSize
-      );
-      ctx.strokeRect(
-        obj.x - handleSize / 2,
-        obj.y + obj.height - handleSize / 2,
-        handleSize,
-        handleSize
-      );
+    // Bottom-left
+    ctx.fillRect(
+      obj.x - handleSize / 2,
+      obj.y + obj.height - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+    ctx.strokeRect(
+      obj.x - handleSize / 2,
+      obj.y + obj.height - handleSize / 2,
+      handleSize,
+      handleSize
+    );
 
-      // Bottom-right
-      ctx.fillRect(
-        obj.x + obj.width - handleSize / 2,
-        obj.y + obj.height - handleSize / 2,
-        handleSize,
-        handleSize
-      );
-      ctx.strokeRect(
-        obj.x + obj.width - handleSize / 2,
-        obj.y + obj.height - handleSize / 2,
-        handleSize,
-        handleSize
-      );
-    }
+    // Bottom-right
+    ctx.fillRect(
+      obj.x + obj.width - handleSize / 2,
+      obj.y + obj.height - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+    ctx.strokeRect(
+      obj.x + obj.width - handleSize / 2,
+      obj.y + obj.height - handleSize / 2,
+      handleSize,
+      handleSize
+    );
 
     ctx.restore();
   }
@@ -309,7 +388,8 @@
   }
 
   function getResizeHandleAtPoint(obj, x, y) {
-    if (!obj || obj.type !== "shape") return null;
+    // Only allow resizing for objects that are marked as resizable
+    if (!obj || !obj.resizable) return null;
 
     const handleSize = 6;
     const handles = [
@@ -349,6 +429,8 @@
   }
 
   function resizeObject(obj, handle, newX, newY) {
+    if (!obj.resizable) return;
+
     switch (handle) {
       case "top-left":
         obj.width += obj.x - newX;
@@ -375,6 +457,11 @@
     // Ensure minimum size
     obj.width = Math.max(obj.width, 10);
     obj.height = Math.max(obj.height, 10);
+
+    // For text objects, update font size proportionally
+    if (obj.type === "text") {
+      obj.size = Math.max(12, Math.min(obj.width / 5, obj.height));
+    }
   }
 
   function deselectAllObjects() {
@@ -464,8 +551,13 @@
     pushHistory(base);
     TS.layers.push(base);
     TS.activeLayer = 0;
+
+    // Initialize text background setting
+    TS.showTextBackground = true;
+
     renderUI();
     updateCanvasSizeDisplay(w, h);
+    initResponsiveUI();
   }
 
   function updateCanvasSizeDisplay(w, h) {
@@ -496,6 +588,7 @@
     });
     renderUI();
     updateCanvasSizeDisplay(w, h);
+    initResponsiveUI();
   }
   window.addEventListener("resize", resizeAll);
 
@@ -844,7 +937,18 @@
   // ---------- Text Modal Management ----------
   function openTextModal() {
     isTextModalOpen = true;
-    document.getElementById("textModal")?.classList.remove("hidden");
+    const textModal = document.getElementById("textModal");
+    if (textModal) {
+      textModal.classList.remove("hidden");
+      textModal.style.zIndex = "2000";
+      textModal.style.position = "fixed";
+      textModal.style.top = "50%";
+      textModal.style.left = "50%";
+      textModal.style.transform = "translate(-50%, -50%)";
+      textModal.style.maxWidth = "90vw";
+      textModal.style.maxHeight = "90vh";
+      textModal.style.overflow = "auto";
+    }
     document.getElementById("textInput")?.focus();
   }
 
@@ -874,12 +978,21 @@
         activeObject = clickedObject;
         showSelectionOverlay(clickedObject);
 
-        // Check if clicking on resize handle
-        resizeHandle = getResizeHandleAtPoint(clickedObject, pos.x, pos.y);
-        if (resizeHandle) {
-          isResizingObject = true;
-          objectStartPos = { x: pos.x, y: pos.y };
+        // Check if clicking on resize handle (for resizable objects)
+        if (clickedObject.resizable) {
+          resizeHandle = getResizeHandleAtPoint(clickedObject, pos.x, pos.y);
+          if (resizeHandle) {
+            isResizingObject = true;
+            objectStartPos = { x: pos.x, y: pos.y };
+          } else {
+            isMovingObject = true;
+            objectStartPos = {
+              x: pos.x - clickedObject.x,
+              y: pos.y - clickedObject.y,
+            };
+          }
         } else {
+          // For non-resizable objects, only allow moving
           isMovingObject = true;
           objectStartPos = {
             x: pos.x - clickedObject.x,
@@ -976,8 +1089,13 @@
       return;
     }
 
-    // Handle object resizing
-    if (isResizingObject && activeObject && resizeHandle) {
+    // Handle object resizing (for resizable objects)
+    if (
+      isResizingObject &&
+      activeObject &&
+      activeObject.resizable &&
+      resizeHandle
+    ) {
       resizeObject(activeObject, resizeHandle, pos.x, pos.y);
       renderLayerWithObjects(layer);
       showSelectionOverlay(activeObject);
@@ -1238,6 +1356,23 @@
     }
   });
 
+  // Text background toggle
+  document
+    .getElementById("textBackgroundToggle")
+    ?.addEventListener("click", function () {
+      TS.showTextBackground = !TS.showTextBackground;
+      this.classList.toggle("active");
+      this.textContent = TS.showTextBackground
+        ? "📝 Text BG: On"
+        : "📝 Text BG: Off";
+
+      // Redraw current layer to update text visibility
+      const layer = currentLayer();
+      if (layer) {
+        renderLayerWithObjects(layer);
+      }
+    });
+
   // Update text tool click handler
   document.getElementById("textTool")?.addEventListener("click", () => {
     setTool("text");
@@ -1480,6 +1615,9 @@
         list.appendChild(item);
       });
   }
+
+  // Initialize responsive UI on load
+  window.addEventListener("load", initResponsiveUI);
 
   // boot
   init();
