@@ -958,6 +958,18 @@
     document.getElementById("textInput").value = "";
   }
 
+  // ---------- Tool Management ----------
+  function setTool(tool) {
+    TS.tool = tool;
+
+    // Reset brush type when switching to brush tool
+    if (tool === "brush") {
+      TS.brushType = "round"; // Default brush type
+    }
+
+    renderUI();
+  }
+
   // ---------- Input ----------
   function start(e) {
     if (isTextModalOpen) return;
@@ -1485,7 +1497,8 @@
           break;
         case "p":
           e.preventDefault();
-          document.getElementById("sprayTool")?.click();
+          setTool("brush");
+          TS.brushType = "spray";
           deselectAllObjects();
           break;
       }
