@@ -40,6 +40,7 @@ const API = {
         headers: {
           "Content-Type": "application/json",
         },
+        // FIX: Removed duplicate 'filename' key
         body: JSON.stringify({
           image: imageData,
           filename: filename,

@@ -27,6 +27,7 @@
     objectStartPos = { x: 0, y: 0 };
   let isResizingObject = false,
     resizeHandle = null;
+  let shapePreviewSnapshot = null; // <-- FIX: Added this line
 
   const maxHistory = 60;
 
@@ -134,6 +135,48 @@
       selected: false,
       resizable: true, // Shape objects CAN be resized
     };
+  }
+
+  // FIXED: Proper layer rendering that preserves both pixel data and objects
+  // (Removed duplicated smoothRenderLayer function)
+  function smoothRenderLayer(layer) {
+    const ctx = layer.ctx;
+    const w = layer.canvas.width / DPR;
+    const h = layer.canvas.height / DPR;
+
+    // 1. Clear the canvas completely
+    ctx.clearRect(0, 0, w, h);
+
+    // 2. Get the current drawing state from history
+    const currentHistory = layer.history[layer.historyIndex];
+
+    if (currentHistory) {
+      const baseImage = new Image();
+      baseImage.onload = function () {
+        // 3. Redraw the base drawing first
+        ctx.drawImage(baseImage, 0, 0, w, h);
+
+        // 4. THEN, redraw all objects on top of it
+        if (layer.objects) {
+          layer.objects.forEach((obj) => {
+            drawObject(ctx, obj);
+          });
+        }
+      };
+      baseImage.src = currentHistory;
+    } else {
+      // If there's no history, just draw the objects on a blank canvas
+      if (layer.id === 0) {
+        // Fill base layer with white if empty
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (layer.objects) {
+        layer.objects.forEach((obj) => {
+          drawObject(ctx, obj);
+        });
+      }
+    }
   }
 
   function drawObject(ctx, obj) {
@@ -488,49 +531,6 @@
   function hideSelectionOverlay() {
     if (selectionOverlay) {
       selectionOverlay.style.display = "none";
-    }
-  }
-
-  // FIXED: This function now properly preserves the painting
-  function renderLayerWithObjects(layer) {
-    const ctx = layer.ctx;
-    const w = layer.canvas.width / DPR;
-    const h = layer.canvas.height / DPR;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, w, h);
-
-    // First, restore the base painting from history - THIS IS THE KEY FIX
-    if (layer.history.length > 0 && layer.historyIndex >= 0) {
-      const snapSrc = layer.history[layer.historyIndex];
-      if (snapSrc) {
-        const img = new Image();
-        img.onload = function () {
-          ctx.drawImage(img, 0, 0, w, h);
-
-          // Then redraw all objects on top
-          if (layer.objects && layer.objects.length > 0) {
-            layer.objects.forEach((obj) => {
-              drawObject(ctx, obj);
-            });
-          }
-        };
-        img.src = snapSrc;
-        return; // Exit early since we're loading async
-      }
-    }
-
-    // If no history, just draw background and objects
-    if (layer.id === 0) {
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    // Redraw all objects
-    if (layer.objects && layer.objects.length > 0) {
-      layer.objects.forEach((obj) => {
-        drawObject(ctx, obj);
-      });
     }
   }
 
@@ -1062,7 +1062,8 @@
     if (TS.tool === "shape") {
       isDrawingShape = true;
       shapeStart = pos;
-      // Don't push history here - wait until shape is complete
+      // FIX: Capture the canvas state *before* drawing the preview
+      shapePreviewSnapshot = layer.canvas.toDataURL();
       return;
     }
     if (TS.tool === "text") {
@@ -1111,6 +1112,12 @@
     }
   }
 
+  //
+  //
+  // --- FIX: MERGED AND CORRECTED MOVE FUNCTION ---
+  // (Removed the duplicated `move` function)
+  //
+  //
   function move(e) {
     if (isTextModalOpen) return;
 
@@ -1123,7 +1130,7 @@
     if (isMovingObject && activeObject) {
       activeObject.x = pos.x - objectStartPos.x;
       activeObject.y = pos.y - objectStartPos.y;
-      renderLayerWithObjects(layer);
+      smoothRenderLayer(layer);
       showSelectionOverlay(activeObject);
       return;
     }
@@ -1136,11 +1143,12 @@
       resizeHandle
     ) {
       resizeObject(activeObject, resizeHandle, pos.x, pos.y);
-      renderLayerWithObjects(layer);
+      smoothRenderLayer(layer);
       showSelectionOverlay(activeObject);
       return;
     }
 
+    // Handle layer movement
     if (isMovingLayer && activeMovingLayer) {
       const dx = pos.x - moveStartPos.x,
         dy = pos.y - moveStartPos.y;
@@ -1150,19 +1158,32 @@
       return;
     }
 
-    // FIXED: Shape preview now preserves the painting
-    if (isDrawingShape && shapeStart) {
-      // Clear and redraw everything properly
-      renderLayerWithObjects(layer);
-      // Then draw the temporary shape preview
-      drawShape(ctx, TS.shapeType, shapeStart.x, shapeStart.y, pos.x, pos.y);
+    //
+    // --- FIX: Handle shape preview without flickering ---
+    //
+    if (isDrawingShape && shapeStart && shapePreviewSnapshot) {
+      const w = layer.canvas.width / DPR;
+      const h = layer.canvas.height / DPR;
+
+      const baseImg = new Image();
+      baseImg.onload = function () {
+        // 1. Clear the real canvas
+        ctx.clearRect(0, 0, w, h);
+        // 2. Draw the snapshot from when drawing started
+        ctx.drawImage(baseImg, 0, 0, w, h);
+        // 3. Draw the temporary shape preview on top
+        drawShape(ctx, TS.shapeType, shapeStart.x, shapeStart.y, pos.x, pos.y);
+      };
+      baseImg.src = shapePreviewSnapshot;
       return;
     }
 
     if (!drawing) return;
 
+    //
+    // --- FIX: Brush and eraser drawing ---
+    //
     if (TS.tool === "eraser") {
-      // FIXED: Proper eraser implementation for continuous erasing
       ctx.save();
       ctx.globalCompositeOperation = "destination-out";
       ctx.lineCap = "round";
@@ -1174,10 +1195,9 @@
       ctx.moveTo(last.x, last.y);
       ctx.lineTo(pos.x, pos.y);
       ctx.stroke();
-
       ctx.restore();
     } else if (TS.tool === "brush") {
-      if (TS.brushType === "spray")
+      if (TS.brushType === "spray") {
         sprayAt(
           ctx,
           pos.x,
@@ -1186,7 +1206,7 @@
           Math.max(10, TS.size * 2),
           TS.color
         );
-      else
+      } else {
         strokeLine(
           ctx,
           last.x,
@@ -1197,8 +1217,14 @@
           TS.color,
           TS.brushType
         );
+      }
     }
     last = pos;
+
+    //
+    // --- FIX: Removed object redrawing loop ---
+    // (This was causing brush strokes to flicker or draw incorrectly)
+    //
   }
 
   function end(e) {
@@ -1223,10 +1249,12 @@
       return;
     }
 
-    // FIXED: Shape completion now properly preserves everything
+    //
+    // --- FIX: Handle shape drawing completion ---
+    //
     if (isDrawingShape && shapeStart) {
-      // Create a shape object
-      const shapeObj = createShapeObject(
+      // 1. Create the shape as an object
+      const obj = createShapeObject(
         TS.shapeType,
         shapeStart.x,
         shapeStart.y,
@@ -1237,16 +1265,19 @@
         TS.shapeStroke,
         TS.strokeWidth
       );
+      // 2. Add it to the layer's object list
+      layer.objects.push(obj);
 
-      if (!layer.objects) layer.objects = [];
-      layer.objects.push(shapeObj);
+      // 3. Redraw the canvas *with* the new object
+      smoothRenderLayer(layer);
 
-      // Redraw everything properly with the new shape
-      renderLayerWithObjects(layer);
+      // 4. Save the new canvas state (with the object baked in) to history
       pushHistory(layer);
 
+      // 5. Reset state
       isDrawingShape = false;
       shapeStart = null;
+      shapePreviewSnapshot = null;
       return;
     }
 
@@ -1365,7 +1396,7 @@
       );
 
       layer.objects.push(textObj);
-      renderLayerWithObjects(layer);
+      smoothRenderLayer(layer);
       pushHistory(layer);
     }
 
@@ -1405,7 +1436,7 @@
       // Redraw current layer to update text visibility
       const layer = currentLayer();
       if (layer) {
-        renderLayerWithObjects(layer);
+        smoothRenderLayer(layer);
       }
     });
 
@@ -1463,7 +1494,7 @@
       const layer = currentLayer();
       if (layer && layer.objects && activeObject) {
         layer.objects = layer.objects.filter((obj) => obj !== activeObject);
-        renderLayerWithObjects(layer);
+        smoothRenderLayer(layer);
         pushHistory(layer);
         deselectAllObjects();
       }
