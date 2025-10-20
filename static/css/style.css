@@ -931,3 +931,8 @@ body {
     background-color: var(--bg-color);
     color: var(--text-color);
 }
+.layer-canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  backface-visibility: hidden;
+}

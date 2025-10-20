@@ -27,6 +27,7 @@
     objectStartPos = { x: 0, y: 0 };
   let isResizingObject = false,
     resizeHandle = null;
+  let shapePreviewSnapshot = null; // <-- ADD THIS LINE
 
   const maxHistory = 60;
 
@@ -491,19 +492,44 @@
     }
   }
 
+  // FIXED: Proper layer rendering that preserves both pixel data and objects
   function renderLayerWithObjects(layer) {
     const ctx = layer.ctx;
     const w = layer.canvas.width / DPR;
     const h = layer.canvas.height / DPR;
 
-    // Clear canvas
+    // 1. Clear the canvas completely
     ctx.clearRect(0, 0, w, h);
 
-    // Redraw all objects
-    if (layer.objects) {
-      layer.objects.forEach((obj) => {
-        drawObject(ctx, obj);
-      });
+    // 2. Get the current drawing state from history
+    const currentHistory = layer.history[layer.historyIndex];
+
+    if (currentHistory) {
+      const baseImage = new Image();
+      baseImage.onload = function () {
+        // 3. Redraw the base drawing first
+        ctx.drawImage(baseImage, 0, 0, w, h);
+
+        // 4. THEN, redraw all objects on top of it
+        if (layer.objects) {
+          layer.objects.forEach((obj) => {
+            drawObject(ctx, obj);
+          });
+        }
+      };
+      baseImage.src = currentHistory;
+    } else {
+      // If there's no history, just draw the objects on a blank canvas
+      if (layer.id === 0) {
+        // Fill base layer with white if empty
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (layer.objects) {
+        layer.objects.forEach((obj) => {
+          drawObject(ctx, obj);
+        });
+      }
     }
   }
 
@@ -1036,6 +1062,7 @@
       isDrawingShape = true;
       shapeStart = pos;
       // Don't push history here - wait until shape is complete
+      shapePreviewSnapshot = layer.canvas.toDataURL(); // <-- ADD THIS LINE
       return;
     }
     if (TS.tool === "text") {
@@ -1123,19 +1150,43 @@
       return;
     }
 
+    // Handle shape preview
     if (isDrawingShape && shapeStart) {
-      // Temporary shape preview
-      const snapSrc = layer.history[layer.historyIndex];
-      if (!snapSrc) return;
-      const snap = new Image();
-      snap.onload = function () {
-        const w = layer.canvas.width / DPR,
-          h = layer.canvas.height / DPR;
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(snap, 0, 0, w, h);
-        drawShape(ctx, TS.shapeType, shapeStart.x, shapeStart.y, pos.x, pos.y);
-      };
-      snap.src = snapSrc;
+      // Save current drawing state
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = layer.canvas.width;
+      tempCanvas.height = layer.canvas.height;
+      const tempCtx = tempCanvas.getContext("2d");
+
+      // Draw the base content
+      if (layer.historyIndex >= 0 && layer.history[layer.historyIndex]) {
+        const baseImg = new Image();
+        baseImg.onload = function () {
+          tempCtx.drawImage(baseImg, 0, 0, w, h);
+
+          // Draw existing objects
+          if (layer.objects && layer.objects.length > 0) {
+            layer.objects.forEach((obj) => {
+              drawObject(tempCtx, obj);
+            });
+          }
+
+          // Draw the temporary shape
+          drawShape(
+            tempCtx,
+            TS.shapeType,
+            shapeStart.x,
+            shapeStart.y,
+            pos.x,
+            pos.y
+          );
+
+          // Update main canvas
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(tempCanvas, 0, 0);
+        };
+        baseImg.src = layer.history[layer.historyIndex];
+      }
       return;
     }
 
@@ -1179,6 +1230,11 @@
         );
     }
     last = pos;
+    if (layer.objects && layer.objects.length > 0) {
+      layer.objects.forEach((obj) => {
+        if (obj.selected) drawObject(ctx, obj);
+      });
+    }
   }
 
   function end(e) {
@@ -1203,9 +1259,9 @@
       return;
     }
 
+    // Handle shape drawing completion
     if (isDrawingShape && shapeStart) {
-      // Create a shape object instead of drawing directly
-      const shapeObj = createShapeObject(
+      const obj = createShapeObject(
         TS.shapeType,
         shapeStart.x,
         shapeStart.y,
@@ -1216,11 +1272,9 @@
         TS.shapeStroke,
         TS.strokeWidth
       );
-
-      layer.objects.push(shapeObj);
-      renderLayerWithObjects(layer);
-      pushHistory(layer);
-
+      layer.objects.push(obj);
+      pushHistory(layer); // ✅ MOVE THIS LINE UP
+      renderLayerWithObjects(layer); // ✅ MOVE THIS LINE DOWN
       isDrawingShape = false;
       shapeStart = null;
       return;

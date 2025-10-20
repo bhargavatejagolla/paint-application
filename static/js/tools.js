@@ -1,4 +1,5 @@
 // tools.js — Fixed and enhanced tools functionality
+const TS = window.ToolState;
 (function () {
   const state = {
     tool: "brush",
