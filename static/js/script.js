@@ -27,7 +27,8 @@
     objectStartPos = { x: 0, y: 0 };
   let isResizingObject = false,
     resizeHandle = null;
-  let shapePreviewSnapshot = null; // <-- FIX: Added this line
+  // Buffer to hold the canvas snapshot used for shape preview (synchronous copy)
+  let shapePreviewBuffer = null;
 
   const maxHistory = 60;
 
@@ -86,10 +87,11 @@
     }
   }
 
-  // ---------- Object System ----------
+  // ---------- Enhanced Object System ----------
   function createTextObject(text, x, y, font, size, color, isBold, isItalic) {
     return {
       type: "text",
+      id: "text_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
       text: text,
       x: x,
       y: y,
@@ -102,6 +104,20 @@
       italic: isItalic,
       selected: false,
       resizable: true, // Text objects CAN be resized
+    };
+  }
+
+  function createImageObject(img, x, y, width, height) {
+    return {
+      type: "image",
+      id: "image_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+      img: img, // HTMLImageElement or canvas
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+      selected: false,
+      resizable: true,
     };
   }
 
@@ -118,11 +134,12 @@
   ) {
     const x = Math.min(x1, x2);
     const y = Math.min(y1, y2);
-    const width = Math.abs(x2 - x1);
-    const height = Math.abs(y2 - y1);
+    const width = Math.max(Math.abs(x2 - x1), 5);
+    const height = Math.max(Math.abs(y2 - y1), 5);
 
     return {
       type: "shape",
+      id: "shape_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
       shapeType: shapeType,
       x: x,
       y: y,
@@ -137,8 +154,7 @@
     };
   }
 
-  // FIXED: Proper layer rendering that preserves both pixel data and objects
-  // (Removed duplicated smoothRenderLayer function)
+  // ---------- FIXED: Enhanced Rendering System ----------
   function smoothRenderLayer(layer) {
     const ctx = layer.ctx;
     const w = layer.canvas.width / DPR;
@@ -176,6 +192,14 @@
           drawObject(ctx, obj);
         });
       }
+    }
+  }
+
+  function drawAllObjects(layer) {
+    if (layer.objects && layer.objects.length > 0) {
+      layer.objects.forEach((obj) => {
+        drawObject(layer.ctx, obj);
+      });
     }
   }
 
@@ -291,10 +315,87 @@
             Math.min(obj.width, obj.height) / 2
           );
           break;
+        // NEW SHAPES ADDED HERE
+        case "cloud":
+          drawCloud(ctx, obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "house":
+          drawHouse(ctx, obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "burst":
+          drawBurst(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            Math.min(obj.width, obj.height) / 2
+          );
+          break;
+        case "cross":
+          drawCross(ctx, obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "moon":
+          drawMoon(ctx, obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "hexagon":
+          drawHexagon(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            Math.min(obj.width, obj.height) / 2
+          );
+          break;
+        case "octagon":
+          drawOctagon(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            Math.min(obj.width, obj.height) / 2
+          );
+          break;
+        case "roundedRect":
+          drawRoundedRect(ctx, obj.x, obj.y, obj.width, obj.height, 10);
+          break;
+        case "speechBubble":
+          drawSpeechBubble(ctx, obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "thoughtBubble":
+          drawThoughtBubble(ctx, obj.x, obj.y, obj.width, obj.height);
+          break;
+        case "spiral":
+          drawSpiral(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            Math.min(obj.width, obj.height) / 2
+          );
+          break;
+        case "cog":
+          drawCog(
+            ctx,
+            obj.x + obj.width / 2,
+            obj.y + obj.height / 2,
+            Math.min(obj.width, obj.height) / 2
+          );
+          break;
       }
 
       if (fill) ctx.fill();
       if (stroke) ctx.stroke();
+    } else if (obj.type === "image") {
+      try {
+        if (
+          obj.img instanceof HTMLImageElement ||
+          obj.img instanceof HTMLCanvasElement
+        ) {
+          ctx.drawImage(obj.img, obj.x, obj.y, obj.width, obj.height);
+        } else if (typeof obj.img === "string") {
+          const im = new Image();
+          im.src = obj.img;
+          ctx.drawImage(im, obj.x, obj.y, obj.width, obj.height);
+        }
+      } catch (e) {
+        console.warn("Error drawing image object:", e);
+      }
     }
 
     ctx.restore();
@@ -306,6 +407,297 @@
       // Just draw bounding box for non-resizable objects
       drawBoundingBox(ctx, obj);
     }
+  }
+
+  // ---------- NEW SHAPE DRAWING FUNCTIONS ----------
+  function drawCloud(ctx, x, y, width, height) {
+    const radius = Math.min(width, height) / 4;
+    ctx.moveTo(x + radius, y + height / 2);
+    ctx.arc(x + radius, y + height / 2, radius, Math.PI, 0, false);
+    ctx.arc(x + radius * 2, y + height / 3, radius * 0.8, 0, Math.PI, true);
+    ctx.arc(x + radius * 3, y + height / 2, radius, 0, Math.PI, false);
+    ctx.closePath();
+  }
+
+  function drawHouse(ctx, x, y, width, height) {
+    // Roof
+    ctx.moveTo(x, y + height * 0.6);
+    ctx.lineTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height * 0.6);
+    // Base
+    ctx.lineTo(x + width * 0.8, y + height * 0.6);
+    ctx.lineTo(x + width * 0.8, y + height);
+    ctx.lineTo(x + width * 0.2, y + height);
+    ctx.lineTo(x + width * 0.2, y + height * 0.6);
+    ctx.closePath();
+  }
+
+  function drawBurst(ctx, cx, cy, size) {
+    const spikes = 8;
+    for (let i = 0; i < spikes; i++) {
+      const angle = (i * Math.PI * 2) / spikes;
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(angle) * size, cy + Math.sin(angle) * size);
+    }
+  }
+
+  function drawCross(ctx, x, y, width, height) {
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const armWidth = width / 3;
+    const armHeight = height / 3;
+
+    // Horizontal arm
+    ctx.rect(x, centerY - armHeight / 2, width, armHeight);
+    // Vertical arm
+    ctx.rect(centerX - armWidth / 2, y, armWidth, height);
+  }
+
+  function drawMoon(ctx, x, y, width, height) {
+    const radius = Math.min(width, height) / 2;
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+
+    ctx.arc(centerX, centerY, radius, 0.5 * Math.PI, 1.5 * Math.PI, false);
+    ctx.arc(
+      centerX - radius * 0.3,
+      centerY,
+      radius * 0.7,
+      1.5 * Math.PI,
+      0.5 * Math.PI,
+      true
+    );
+    ctx.closePath();
+  }
+
+  function drawHexagon(ctx, cx, cy, size) {
+    drawPolygon(ctx, cx, cy, 6, size);
+  }
+
+  function drawOctagon(ctx, cx, cy, size) {
+    drawPolygon(ctx, cx, cy, 8, size);
+  }
+
+  function drawRoundedRect(ctx, x, y, width, height, radius) {
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  function drawSpeechBubble(ctx, x, y, width, height) {
+    const radius = 10;
+    const tailSize = 15;
+
+    // Main bubble
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius - tailSize);
+    ctx.quadraticCurveTo(
+      x + width,
+      y + height - tailSize,
+      x + width - radius,
+      y + height - tailSize
+    );
+    ctx.lineTo(x + radius + tailSize, y + height - tailSize);
+    ctx.lineTo(x + radius, y + height);
+    ctx.lineTo(x + radius + tailSize, y + height - tailSize);
+    ctx.lineTo(x + radius, y + height - tailSize);
+    ctx.quadraticCurveTo(
+      x,
+      y + height - tailSize,
+      x,
+      y + height - radius - tailSize
+    );
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  function drawThoughtBubble(ctx, x, y, width, height) {
+    const radius = 10;
+    const circleSize = 5;
+
+    // Main bubble
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+
+    // Thought circles
+    ctx.moveTo(x + width * 0.7, y + height);
+    ctx.arc(
+      x + width * 0.7,
+      y + height + circleSize,
+      circleSize,
+      0,
+      Math.PI * 2
+    );
+    ctx.moveTo(x + width * 0.8, y + height + circleSize * 2);
+    ctx.arc(
+      x + width * 0.8,
+      y + height + circleSize * 3,
+      circleSize * 0.7,
+      0,
+      Math.PI * 2
+    );
+  }
+
+  function drawSpiral(ctx, cx, cy, size) {
+    const coils = 4;
+    const rotation = 2;
+    ctx.moveTo(cx, cy);
+
+    for (let i = 0; i <= 360 * coils; i++) {
+      const angle = (i * Math.PI) / 180;
+      const radius = size * (i / (360 * coils));
+      const x = cx + Math.cos(angle + rotation) * radius;
+      const y = cy + Math.sin(angle + rotation) * radius;
+      ctx.lineTo(x, y);
+    }
+  }
+
+  function drawCog(ctx, cx, cy, size) {
+    const teeth = 8;
+    const innerRadius = size * 0.6;
+    const toothDepth = size * 0.2;
+
+    for (let i = 0; i < teeth; i++) {
+      const angle = (i * 2 * Math.PI) / teeth;
+      const nextAngle = ((i + 1) * 2 * Math.PI) / teeth;
+
+      // Tooth outer point
+      const outerX1 = cx + Math.cos(angle) * size;
+      const outerY1 = cy + Math.sin(angle) * size;
+
+      // Tooth inner point
+      const innerX1 = cx + Math.cos(angle) * innerRadius;
+      const innerY1 = cy + Math.sin(angle) * innerRadius;
+
+      const innerX2 = cx + Math.cos(nextAngle) * innerRadius;
+      const innerY2 = cy + Math.sin(nextAngle) * innerRadius;
+
+      const outerX2 = cx + Math.cos(nextAngle) * size;
+      const outerY2 = cy + Math.sin(nextAngle) * size;
+
+      if (i === 0) {
+        ctx.moveTo(outerX1, outerY1);
+      } else {
+        ctx.lineTo(outerX1, outerY1);
+      }
+
+      ctx.lineTo(innerX1, innerY1);
+      ctx.lineTo(innerX2, innerY2);
+      ctx.lineTo(outerX2, outerY2);
+    }
+    ctx.closePath();
+  }
+
+  // Keep existing shape functions (triangle, star, heart, arrow, polygon)
+  function drawTriangle(ctx, x, y, width, height) {
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x, y + height);
+    ctx.lineTo(x + width, y + height);
+    ctx.closePath();
+  }
+
+  function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
+    let rot = (Math.PI / 2) * 3;
+    let x = cx;
+    let y = cy;
+    let step = Math.PI / spikes;
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - outerRadius);
+
+    for (let i = 0; i < spikes; i++) {
+      x = cx + Math.cos(rot) * outerRadius;
+      y = cy + Math.sin(rot) * outerRadius;
+      ctx.lineTo(x, y);
+      rot += step;
+
+      x = cx + Math.cos(rot) * innerRadius;
+      y = cy + Math.sin(rot) * innerRadius;
+      ctx.lineTo(x, y);
+      rot += step;
+    }
+
+    ctx.lineTo(cx, cy - outerRadius);
+    ctx.closePath();
+  }
+
+  function drawHeart(ctx, x, y, width, height) {
+    const topCurveHeight = height * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(x, y + height / 4);
+    // Left top curve
+    ctx.bezierCurveTo(x, y, x - width / 2, y, x - width / 2, y + height / 4);
+    // Left bottom curve
+    ctx.bezierCurveTo(
+      x - width / 2,
+      y + height / 2,
+      x,
+      y + height * 0.75,
+      x,
+      y + height
+    );
+    // Right bottom curve
+    ctx.bezierCurveTo(
+      x,
+      y + height * 0.75,
+      x + width / 2,
+      y + height / 2,
+      x + width / 2,
+      y + height / 4
+    );
+    // Right top curve
+    ctx.bezierCurveTo(x + width / 2, y, x, y, x, y + height / 4);
+    ctx.closePath();
+  }
+
+  function drawArrow(ctx, fromX, fromY, toX, toY) {
+    const headlen = 15;
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.moveTo(
+      toX - headlen * Math.cos(angle - Math.PI / 6),
+      toY - headlen * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.lineTo(toX, toY);
+    ctx.lineTo(
+      toX - headlen * Math.cos(angle + Math.PI / 6),
+      toY - headlen * Math.sin(angle + Math.PI / 6)
+    );
+  }
+
+  function drawPolygon(ctx, x, y, sides, radius) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius * Math.cos(0), y + radius * Math.sin(0));
+
+    for (let i = 1; i <= sides; i++) {
+      ctx.lineTo(
+        x + radius * Math.cos((i * 2 * Math.PI) / sides),
+        y + radius * Math.sin((i * 2 * Math.PI) / sides)
+      );
+    }
+
+    ctx.closePath();
   }
 
   function drawBoundingBox(ctx, obj) {
@@ -425,10 +817,54 @@
         ) {
           return obj;
         }
+      } else if (obj.type === "image") {
+        if (
+          x >= obj.x &&
+          x <= obj.x + obj.width &&
+          y >= obj.y &&
+          y <= obj.y + obj.height
+        ) {
+          return obj;
+        }
       }
     }
     return null;
   }
+
+  // Paste handler: supports image clipboard (PNG/JPEG) and image data URLs
+  window.addEventListener("paste", async (e) => {
+    if (!e.clipboardData) return;
+    const items = e.clipboardData.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.indexOf("image") !== -1) {
+        const blob = item.getAsFile();
+        if (!blob) continue;
+
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          // Create image object in center of canvas
+          const layer = currentLayer();
+          if (!layer) return;
+          const w = img.width / DPR;
+          const h = img.height / DPR;
+          const xpos = Math.max(10, (layer.canvas.width / DPR - w) / 2);
+          const ypos = Math.max(10, (layer.canvas.height / DPR - h) / 2);
+
+          const imgObj = createImageObject(img, xpos, ypos, w, h);
+          layer.objects.push(imgObj);
+          smoothRenderLayer(layer);
+          pushHistory(layer);
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+        e.preventDefault();
+        return;
+      }
+    }
+  });
 
   function getResizeHandleAtPoint(obj, x, y) {
     // Only allow resizing for objects that are marked as resizable
@@ -783,93 +1219,6 @@
     ctx.putImageData(img, 0, 0);
   }
 
-  // ---------- Shape Drawing Functions ----------
-  function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
-    let rot = (Math.PI / 2) * 3;
-    let x = cx;
-    let y = cy;
-    let step = Math.PI / spikes;
-
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - outerRadius);
-
-    for (let i = 0; i < spikes; i++) {
-      x = cx + Math.cos(rot) * outerRadius;
-      y = cy + Math.sin(rot) * outerRadius;
-      ctx.lineTo(x, y);
-      rot += step;
-
-      x = cx + Math.cos(rot) * innerRadius;
-      y = cy + Math.sin(rot) * innerRadius;
-      ctx.lineTo(x, y);
-      rot += step;
-    }
-
-    ctx.lineTo(cx, cy - outerRadius);
-    ctx.closePath();
-  }
-
-  function drawHeart(ctx, x, y, width, height) {
-    const topCurveHeight = height * 0.3;
-    ctx.beginPath();
-    ctx.moveTo(x, y + height / 4);
-    // Left top curve
-    ctx.bezierCurveTo(x, y, x - width / 2, y, x - width / 2, y + height / 4);
-    // Left bottom curve
-    ctx.bezierCurveTo(
-      x - width / 2,
-      y + height / 2,
-      x,
-      y + height * 0.75,
-      x,
-      y + height
-    );
-    // Right bottom curve
-    ctx.bezierCurveTo(
-      x,
-      y + height * 0.75,
-      x + width / 2,
-      y + height / 2,
-      x + width / 2,
-      y + height / 4
-    );
-    // Right top curve
-    ctx.bezierCurveTo(x + width / 2, y, x, y, x, y + height / 4);
-    ctx.closePath();
-  }
-
-  function drawArrow(ctx, fromX, fromY, toX, toY) {
-    const headlen = 15;
-    const angle = Math.atan2(toY - fromY, toX - fromX);
-
-    ctx.beginPath();
-    ctx.moveTo(fromX, fromY);
-    ctx.lineTo(toX, toY);
-    ctx.moveTo(
-      toX - headlen * Math.cos(angle - Math.PI / 6),
-      toY - headlen * Math.sin(angle - Math.PI / 6)
-    );
-    ctx.lineTo(toX, toY);
-    ctx.lineTo(
-      toX - headlen * Math.cos(angle + Math.PI / 6),
-      toY - headlen * Math.sin(angle + Math.PI / 6)
-    );
-  }
-
-  function drawPolygon(ctx, x, y, sides, radius) {
-    ctx.beginPath();
-    ctx.moveTo(x + radius * Math.cos(0), y + radius * Math.sin(0));
-
-    for (let i = 1; i <= sides; i++) {
-      ctx.lineTo(
-        x + radius * Math.cos((i * 2 * Math.PI) / sides),
-        y + radius * Math.sin((i * 2 * Math.PI) / sides)
-      );
-    }
-
-    ctx.closePath();
-  }
-
   function drawShape(ctx, shapeType, x1, y1, x2, y2) {
     ctx.save();
     ctx.globalAlpha = TS.opacity;
@@ -953,6 +1302,68 @@
           Math.min(Math.abs(width), Math.abs(height)) / 2
         );
         break;
+      // NEW SHAPES FOR PREVIEW
+      case "cloud":
+        drawCloud(ctx, x1, y1, Math.abs(width), Math.abs(height));
+        break;
+      case "house":
+        drawHouse(ctx, x1, y1, Math.abs(width), Math.abs(height));
+        break;
+      case "burst":
+        drawBurst(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.min(Math.abs(width), Math.abs(height)) / 2
+        );
+        break;
+      case "cross":
+        drawCross(ctx, x1, y1, Math.abs(width), Math.abs(height));
+        break;
+      case "moon":
+        drawMoon(ctx, x1, y1, Math.abs(width), Math.abs(height));
+        break;
+      case "hexagon":
+        drawHexagon(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.min(Math.abs(width), Math.abs(height)) / 2
+        );
+        break;
+      case "octagon":
+        drawOctagon(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.min(Math.abs(width), Math.abs(height)) / 2
+        );
+        break;
+      case "roundedRect":
+        drawRoundedRect(ctx, x1, y1, Math.abs(width), Math.abs(height), 10);
+        break;
+      case "speechBubble":
+        drawSpeechBubble(ctx, x1, y1, Math.abs(width), Math.abs(height));
+        break;
+      case "thoughtBubble":
+        drawThoughtBubble(ctx, x1, y1, Math.abs(width), Math.abs(height));
+        break;
+      case "spiral":
+        drawSpiral(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.min(Math.abs(width), Math.abs(height)) / 2
+        );
+        break;
+      case "cog":
+        drawCog(
+          ctx,
+          x1 + width / 2,
+          y1 + height / 2,
+          Math.min(Math.abs(width), Math.abs(height)) / 2
+        );
+        break;
     }
 
     if (fill) ctx.fill();
@@ -997,7 +1408,7 @@
     renderUI();
   }
 
-  // ---------- Input ----------
+  // ---------- FIXED: Enhanced Input Handling ----------
   function start(e) {
     if (isTextModalOpen) return;
 
@@ -1038,6 +1449,7 @@
             y: pos.y - clickedObject.y,
           };
         }
+        smoothRenderLayer(layer);
         return;
       } else {
         // Deselect all objects if clicking elsewhere
@@ -1049,6 +1461,7 @@
         moveStartPos = pos;
         originalLayerOffset = { x: layer.offsetX, y: layer.offsetY };
         canvasStack.style.cursor = "move";
+        smoothRenderLayer(layer);
         return;
       }
     }
@@ -1063,7 +1476,14 @@
       isDrawingShape = true;
       shapeStart = pos;
       // FIX: Capture the canvas state *before* drawing the preview
-      shapePreviewSnapshot = layer.canvas.toDataURL();
+      // Create an offscreen buffer canvas and copy current layer into it.
+      shapePreviewBuffer = document.createElement("canvas");
+      // Use same physical pixel size as layer canvas to avoid scaling artifacts
+      shapePreviewBuffer.width = layer.canvas.width;
+      shapePreviewBuffer.height = layer.canvas.height;
+      const bufCtx = shapePreviewBuffer.getContext("2d");
+      // Draw the current layer into the buffer synchronously
+      bufCtx.drawImage(layer.canvas, 0, 0);
       return;
     }
     if (TS.tool === "text") {
@@ -1071,7 +1491,7 @@
       return;
     }
 
-    // Brush and eraser tools
+    // Brush and eraser tools - FIXED: Now preserves existing content
     drawing = true;
     last = pos;
 
@@ -1109,15 +1529,11 @@
           );
         }
       }
+      // FIXED: Redraw objects to maintain proper layering
+      drawAllObjects(layer);
     }
   }
 
-  //
-  //
-  // --- FIX: MERGED AND CORRECTED MOVE FUNCTION ---
-  // (Removed the duplicated `move` function)
-  //
-  //
   function move(e) {
     if (isTextModalOpen) return;
 
@@ -1158,31 +1574,23 @@
       return;
     }
 
-    //
-    // --- FIX: Handle shape preview without flickering ---
-    //
-    if (isDrawingShape && shapeStart && shapePreviewSnapshot) {
+    // Handle shape preview without flickering
+    if (isDrawingShape && shapeStart && shapePreviewBuffer) {
       const w = layer.canvas.width / DPR;
       const h = layer.canvas.height / DPR;
 
-      const baseImg = new Image();
-      baseImg.onload = function () {
-        // 1. Clear the real canvas
-        ctx.clearRect(0, 0, w, h);
-        // 2. Draw the snapshot from when drawing started
-        ctx.drawImage(baseImg, 0, 0, w, h);
-        // 3. Draw the temporary shape preview on top
-        drawShape(ctx, TS.shapeType, shapeStart.x, shapeStart.y, pos.x, pos.y);
-      };
-      baseImg.src = shapePreviewSnapshot;
+      // 1. Clear the real canvas
+      ctx.clearRect(0, 0, w, h);
+      // 2. Draw the synchronous buffer copy (no async image loading)
+      ctx.drawImage(shapePreviewBuffer, 0, 0, w, h);
+      // 3. Draw the temporary shape preview on top
+      drawShape(ctx, TS.shapeType, shapeStart.x, shapeStart.y, pos.x, pos.y);
       return;
     }
 
     if (!drawing) return;
 
-    //
-    // --- FIX: Brush and eraser drawing ---
-    //
+    // Handle brush and eraser drawing
     if (TS.tool === "eraser") {
       ctx.save();
       ctx.globalCompositeOperation = "destination-out";
@@ -1221,10 +1629,8 @@
     }
     last = pos;
 
-    //
-    // --- FIX: Removed object redrawing loop ---
-    // (This was causing brush strokes to flicker or draw incorrectly)
-    //
+    // FIXED: Redraw objects to maintain layering
+    drawAllObjects(layer);
   }
 
   function end(e) {
@@ -1249,9 +1655,7 @@
       return;
     }
 
-    //
-    // --- FIX: Handle shape drawing completion ---
-    //
+    // Handle shape drawing completion
     if (isDrawingShape && shapeStart) {
       // 1. Create the shape as an object
       const obj = createShapeObject(
@@ -1277,7 +1681,7 @@
       // 5. Reset state
       isDrawingShape = false;
       shapeStart = null;
-      shapePreviewSnapshot = null;
+      shapePreviewBuffer = null;
       return;
     }
 

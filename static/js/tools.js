@@ -1,4 +1,4 @@
-// tools.js — Fixed and enhanced tools functionality
+// tools.js — Enhanced with scrollable shapes panel
 const TS = window.ToolState;
 (function () {
   const state = {
@@ -17,6 +17,82 @@ const TS = window.ToolState;
     secondaryColor: "#ffffff",
   };
   window.ToolState = state;
+
+  // Enhanced shapes list with ALL new shapes
+  const shapesList = [
+    { name: "rect", icon: "⬛", label: "Rectangle" },
+    { name: "circle", icon: "⚪", label: "Circle" },
+    { name: "ellipse", icon: "🌀", label: "Ellipse" },
+    { name: "triangle", icon: "🔺", label: "Triangle" },
+    { name: "line", icon: "📏", label: "Line" },
+    { name: "star", icon: "⭐", label: "Star" },
+    { name: "heart", icon: "❤️", label: "Heart" },
+    { name: "arrow", icon: "➡️", label: "Arrow" },
+    { name: "polygon", icon: "🔷", label: "Polygon" },
+    { name: "cloud", icon: "☁️", label: "Cloud" },
+    { name: "house", icon: "🏠", label: "House" },
+    { name: "burst", icon: "💥", label: "Burst" },
+    { name: "cross", icon: "➕", label: "Cross" },
+    { name: "moon", icon: "🌙", label: "Moon" },
+    { name: "hexagon", icon: "⎔", label: "Hexagon" },
+    { name: "octagon", icon: "⏹️", label: "Octagon" },
+    { name: "roundedRect", icon: "🔲", label: "Rounded Rect" },
+    { name: "speechBubble", icon: "💬", label: "Speech Bubble" },
+    { name: "thoughtBubble", icon: "💭", label: "Thought Bubble" },
+    { name: "spiral", icon: "🌀", label: "Spiral" },
+    { name: "cog", icon: "⚙️", label: "Cog" },
+  ];
+
+  // Initialize enhanced shapes dropdown
+  function initShapesDropdown() {
+    const dropdownMenu = document.getElementById("shapeDropdown");
+    if (!dropdownMenu) return;
+
+    // Clear existing content
+    dropdownMenu.innerHTML = "";
+
+    // Create scrollable container
+    const scrollContainer = document.createElement("div");
+    scrollContainer.style.maxHeight = "300px";
+    scrollContainer.style.overflowY = "auto";
+    scrollContainer.style.paddingRight = "5px";
+
+    // Add all shapes
+    shapesList.forEach((shape) => {
+      const button = document.createElement("button");
+      button.className = "shape-option";
+      button.dataset.shape = shape.name;
+      button.innerHTML = `${shape.icon} ${shape.label}`;
+
+      button.addEventListener("click", () => {
+        state.shapeType = shape.name;
+        setTool("shape");
+        document.getElementById("shapeDropdownRoot").classList.remove("open");
+        updateStatus();
+      });
+
+      scrollContainer.appendChild(button);
+    });
+
+    dropdownMenu.appendChild(scrollContainer);
+
+    // Add custom scrollbar styling
+    const style = document.createElement("style");
+    style.textContent = `
+      #shapeDropdown div::-webkit-scrollbar {
+        width: 6px;
+      }
+      #shapeDropdown div::-webkit-scrollbar-track {
+        background: var(--border);
+        border-radius: 3px;
+      }
+      #shapeDropdown div::-webkit-scrollbar-thumb {
+        background: var(--accent-solid);
+        border-radius: 3px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
 
   // ---- Helpers ----
   function highlightActive() {
@@ -152,15 +228,6 @@ const TS = window.ToolState;
     dropdownRoot.classList.toggle("open");
   });
 
-  dropdownMenu?.querySelectorAll(".shape-option").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.shapeType = btn.dataset.shape;
-      setTool("shape");
-      dropdownRoot.classList.remove("open");
-      updateStatus();
-    });
-  });
-
   // Close dropdown when clicking elsewhere
   document.addEventListener("click", (e) => {
     if (!dropdownRoot?.contains(e.target)) {
@@ -256,8 +323,9 @@ const TS = window.ToolState;
       window.dispatchEvent(new CustomEvent("duplicateLayer"));
     });
 
-  // Initialize
+  // Initialize enhanced shapes dropdown on DOM load
   window.addEventListener("DOMContentLoaded", () => {
+    initShapesDropdown();
     setTool("brush");
     updatePropertiesPanel();
     updateRecentColorsDisplay();
