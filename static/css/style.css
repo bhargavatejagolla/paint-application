@@ -936,3 +936,57 @@ body {
   image-rendering: crisp-edges;
   backface-visibility: hidden;
 }
+/* Enhanced Shapes Dropdown */
+#shapeDropdown {
+  max-height: 350px;
+  width: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.shape-option {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.shape-option:hover {
+  background: var(--accent-solid);
+  color: #fff;
+}
+
+/* Custom scrollbar for shapes dropdown */
+#shapeDropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+#shapeDropdown::-webkit-scrollbar-track {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+#shapeDropdown::-webkit-scrollbar-thumb {
+  background: var(--accent-solid);
+  border-radius: 3px;
+}
+
+#shapeDropdown::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* Ensure dropdown stays on top */
+.dropdown.open .dropdown-menu {
+  display: block;
+  z-index: 10000;
+}
