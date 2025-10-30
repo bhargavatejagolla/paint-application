@@ -60,10 +60,12 @@ def save_drawing():
 
         # Remove header if present (base64 image prefix)
         if ',' in image_data:
+            # image_data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
             image_data = image_data.split(',')[1]
 
+
         # Save image
-        filepath = save_image(image_data, filename, SAVED_FOLDER)
+        filepath = save_image(image_data, filename, SAVED_FOLDER)#image_handler decodes and writes to disk
 
         return jsonify({
             'success': True,
