@@ -8,6 +8,13 @@
  * A generic helper object for making fetch requests.
  * @type {{postJSON: (function(String, Object): Promise<any>), getJSON: (function(String): Promise<any>)}}
  */
+
+// This object contains all operations related to images:
+// Save drawing
+// Download saved image
+// Load gallery
+// Apply filters
+// Enhance with AI
 const api = {
   /**
    * Sends a POST request with a JSON payload.
